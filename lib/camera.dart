@@ -45,11 +45,7 @@ class _MyWidgetState extends State<MyWidget> {
       // Convert to grayscale
       image = img.grayscale(image);
 
-      // Increase contrast
-      image = img.contrast(image, contrast: 150);
-
-      // Adjust color to enhance image
-      image = img.adjustColor(image, contrast: 1.5, saturation: 1.2);
+      
 
       // Save the processed image
       final directory = await path_provider.getTemporaryDirectory();
