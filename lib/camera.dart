@@ -1,113 +1,122 @@
 import 'dart:io';
+import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-import 'package:path_provider/path_provider.dart' as path_provider;
 import 'package:image/image.dart' as img;
 
-class MyWidget extends StatefulWidget {
-  const MyWidget({super.key});
+class TyreOCRApp extends StatefulWidget {
+  const TyreOCRApp({super.key});
 
   @override
-  State<MyWidget> createState() => _MyWidgetState();
+  State<TyreOCRApp> createState() => _TyreOCRAppState();
 }
 
-class _MyWidgetState extends State<MyWidget> {
-  final ImagePicker _picker = ImagePicker();
-  XFile? _imageFile;
-  String _recognizedText = '';
+class _TyreOCRAppState extends State<TyreOCRApp> {
+  final Dio _dio = Dio();
+  File? _selectedImage;
+  String? _tireSize;
+  String? _width;
+  String? _profile;
+  String? _diameter;
+  bool _loading = false;
+  String? _error;
 
-  Future<void> _openCamera() async {
-    var status = await Permission.camera.request();
-    if (status.isGranted) {
-      final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
-      if (photo != null) {
-        File processedImage = await _preprocessImage(File(photo.path));
-
-        setState(() {
-          _imageFile = XFile(processedImage.path); // Fixing image display issue
-        });
-
-        _recognizeText(processedImage.path);
-      }
-    } else {
-      print('Camera permission denied');
+  Future<void> pickImage(ImageSource source) async {
+    final pickedFile = await ImagePicker().pickImage(
+      source: source,
+      imageQuality: 30, // Further reduced image quality to decrease file size
+      maxWidth: 800,
+      maxHeight: 600,
+    );
+    if (pickedFile != null) {
+      setState(() {
+        _selectedImage = File(pickedFile.path);
+        _tireSize = null;
+        _width = null;
+        _profile = null;
+        _diameter = null;
+        _error = null;
+      });
+      await processImage();
     }
   }
 
-  Future<File> _preprocessImage(File imageFile) async {
+  Future<void> processImage() async {
+    if (_selectedImage == null) return;
+    setState(() => _loading = true);
+
     try {
-      img.Image? image = img.decodeImage(await imageFile.readAsBytes());
+      img.Image? image = img.decodeImage(await _selectedImage!.readAsBytes());
+      if (image != null) {
+        img.Image resizedImage = img.copyResize(image, width: 600); // Resize for smaller size
+        List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 40); // Compress further
+        String base64Image = base64Encode(compressedBytes);
 
-      if (image == null) return imageFile;
+        Response response = await _dio.post(
+          'http://192.168.8.179:5001/api/tyre-info/process-tire-image',
+          data: {'imageBase64': base64Image},
+        );
 
-      // Convert to grayscale
-      image = img.grayscale(image);
-
-      
-
-      // Save the processed image
-      final directory = await path_provider.getTemporaryDirectory();
-      final processedFilePath = '${directory.path}/processed_image.jpg';
-      File processedFile = File(processedFilePath)
-        ..writeAsBytesSync(img.encodeJpg(image));
-
-      return processedFile;
+        if (response.statusCode == 200) {
+          var data = response.data['ocrResult'];
+          setState(() {
+            _tireSize = data['tyreSize'] ?? 'No tire size detected';
+            _width = data['width'];
+            _profile = data['profile'];
+            _diameter = data['diameter'];
+          });
+        } else {
+          setState(() => _error = "Failed to process image");
+        }
+      }
     } catch (e) {
-      print('Error processing image: $e');
-      return imageFile; // Return original if processing fails
+      setState(() => _error = "Error processing image: $e");
+    } finally {
+      setState(() => _loading = false);
     }
-  }
-
-  Future<void> _recognizeText(String imagePath) async {
-    final inputImage = InputImage.fromFilePath(imagePath);
-    final textRecognizer = TextRecognizer();
-    final RecognizedText recognizedText =
-        await textRecognizer.processImage(inputImage);
-
-    setState(() {
-      _recognizedText = recognizedText.text;
-    });
-
-    textRecognizer.close();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Tyre OCR App'),
-      ),
+      appBar: AppBar(title: const Text('Tyre OCR App')),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (_imageFile != null)
+            if (_selectedImage != null)
+              Padding(
+                padding: const EdgeInsets.all(10.0),
+                child: Image.file(_selectedImage!, height: 200),
+              ),
+            if (_loading)
+              const CircularProgressIndicator(),
+            if (_error != null)
+              Text(_error!, style: const TextStyle(color: Colors.red)),
+            if (_tireSize != null)
               Column(
                 children: [
-                  Image.file(
-                    File(_imageFile!.path), // ✅ Fixed Image Not Showing Issue
-                    width: 400,
-                    height: 500,
-                    fit: BoxFit.cover,
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    _recognizedText.isNotEmpty
-                        ? _recognizedText
-                        : 'No text recognized.',
-                    textAlign: TextAlign.center,
-                  ),
+                  Text("Extracted Tire Size: $_tireSize", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  if (_width != null) Text("Width: $_width"),
+                  if (_profile != null) Text("Profile: $_profile"),
+                  if (_diameter != null) Text("Diameter: $_diameter"),
                 ],
               ),
             const SizedBox(height: 20),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color.fromARGB(255, 77, 175, 255),
-              ),
-              onPressed: _openCamera,
-              child: const Text('Open Camera'),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: () => pickImage(ImageSource.camera),
+                  child: const Text('Open Camera'),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: () => pickImage(ImageSource.gallery),
+                  child: const Text('Open Gallery'),
+                ),
+              ],
             ),
           ],
         ),
