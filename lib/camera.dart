@@ -25,7 +25,7 @@ class _TyreOCRAppState extends State<TyreOCRApp> {
   Future<void> pickImage(ImageSource source) async {
     final pickedFile = await ImagePicker().pickImage(
       source: source,
-      imageQuality: 30, // Further reduced image quality to decrease file size
+      imageQuality: 30,
       maxWidth: 800,
       maxHeight: 600,
     );
@@ -49,22 +49,27 @@ class _TyreOCRAppState extends State<TyreOCRApp> {
     try {
       img.Image? image = img.decodeImage(await _selectedImage!.readAsBytes());
       if (image != null) {
-        img.Image resizedImage = img.copyResize(image, width: 600); // Resize for smaller size
-        List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 40); // Compress further
+        img.Image resizedImage = img.copyResize(image, width: 600);
+        List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 40);
         String base64Image = base64Encode(compressedBytes);
 
         Response response = await _dio.post(
-          'http://192.168.8.179:5001/api/tyre-info/process-tire-image',
-          data: {'imageBase64': base64Image},
+          'http://13.212.78.136:5001/api/tyre-info/process-tire-image',
+          data: jsonEncode({
+            'image': base64Image, // Ensure correct key as expected by backend
+          }),
+          options: Options(headers: {
+            'Content-Type': 'application/json',
+          }),
         );
 
-        if (response.statusCode == 200) {
+        if (response.statusCode == 200 && response.data['ocrResult'] != null) {
           var data = response.data['ocrResult'];
           setState(() {
             _tireSize = data['tyreSize'] ?? 'No tire size detected';
-            _width = data['width'];
-            _profile = data['profile'];
-            _diameter = data['diameter'];
+            _width = data['width']?.toString();
+            _profile = data['profile']?.toString();
+            _diameter = data['diameter']?.toString();
           });
         } else {
           setState(() => _error = "Failed to process image");
@@ -90,14 +95,15 @@ class _TyreOCRAppState extends State<TyreOCRApp> {
                 padding: const EdgeInsets.all(10.0),
                 child: Image.file(_selectedImage!, height: 200),
               ),
-            if (_loading)
-              const CircularProgressIndicator(),
+            if (_loading) const CircularProgressIndicator(),
             if (_error != null)
               Text(_error!, style: const TextStyle(color: Colors.red)),
             if (_tireSize != null)
               Column(
                 children: [
-                  Text("Extracted Tire Size: $_tireSize", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text("Extracted Tire Size: $_tireSize",
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold)),
                   if (_width != null) Text("Width: $_width"),
                   if (_profile != null) Text("Profile: $_profile"),
                   if (_diameter != null) Text("Diameter: $_diameter"),
